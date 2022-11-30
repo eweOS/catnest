@@ -13,6 +13,8 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
+#include<ctype.h>
+#include<stdarg.h>
 
 #include<unistd.h>
 
@@ -25,6 +27,21 @@ static FILE *gLogStream = NULL;
 		fprintf(gLogStream,__VA_ARGS__)				\
 		action;							\
 	} } while(0)
+
+static void free_if(int num,...)
+{
+	va_list list;
+	va_start(list,num);
+
+	for (int i = 0;i < num;i++) {
+		void *p = va_arg(list,void *);
+		if (p)
+			free(p);
+	}
+	va_end(list);
+
+	return;
+}
 
 /*
  *	name:password:uid:gid:comment:home:shell
@@ -76,7 +93,7 @@ static struct passwd get_user_by_name(FILE *passwd,const char *name)
 }
 
 typedef struct {
-	char *name;
+	char *name,*passwd;
 	int gid;
 	char *members;
 } Group;
@@ -87,8 +104,8 @@ typedef struct {
 static inline Group next_group(FILE *groupFile)
 {
 	struct Group group;
-	fscanf(groupFile,"%ms:%*s:%d:%ms",&group->name,&group->gid,
-	       &group->members);
+	fscanf(groupFile,"%ms:%ms:%d:%ms",&group->name,&group->passwd,
+	       &group->gid,&group->members);
 	return group;
 }
 
@@ -99,11 +116,47 @@ static void group_destroy(Group group)
 	return;
 }
 
+/*
+ *	We may modify the group file (unlike passwd, which is only appended.
+ *	So load it into memory and write it back later
+ */
+static Group *gGroupList;
+static int gGroupNum,gGroupListSize;
+static void extend_group()
+{
+	if (gGroupNum < gGroupListSize)
+		return;
+
+	gGroupList = realloc(gGroupList,sizeof(Group) * (gGroupListSize + 128));
+	check(gGroupList,exit(-1),"Cannot allocate memory");
+	return;
+}
+
+static void load_group(FILE *file)
+{
+	for (gGroupNum = 0,gGroupListSize = 0;!feof(file);gGroupNum++) {
+		extend_group();
+		gGroupList[gGroupNum] = group_next(file);
+	}
+	return;
+}
+
+static void write_group(FILE *file)
+{
+	for (int i = 0;i < gGroupNum;i++) {
+		fprintf("%s:%s:%d:%s\n",gGroupList[i]->name,
+					gGroupList[i]->passwd,
+					gGroupList[i]->gid,
+					gGroupList[i]->members);
+	}
+	return;
+}
+
 static void iterate_directory(const char *path,
 			      void (*callback)(const char *path))
 {
 	DIR *root = opendir(path);
-	check(root,return,"Cannot open directory %s",path);
+	check(root,return,"Cannot open directory %s\n",path);
 
 	chdir(path);
 	for (struct dirent *dir = readdir(root);dir;dir = readdir(root)) {
@@ -118,8 +171,48 @@ static void iterate_directory(const char *path,
 	return;
 }
 
-int main()
+static const char *skip_space(const char *p)
 {
+	while (isspace(*p) && *p)
+		p++;
+	return p;
+}
+
+static void parse_conf(const char *path)
+{
+	FILE *conf = fopen(path,"r");
+	check(conf,return,"Cannot open configuration %s\n",conf);
+
+	// Type Name ID GECOS Home Shell
+	static const char *pattern = "%c %ms %d \"%m[^\"]s\" %ms %ms";
+	char type,*name,*gecos,*home,*shell;
+	int id;
+	for (int num = fscanf(conf,pattern,&type,&name,&id,&gecos,&home,&shell);
+	     num != EOF;
+	     num = fscanf(conf,pattern,&type,&name,&id,&gecos,&home,&shell)) {
+		if (type == "#")
+			goto nextLoop;
+
+nextLoop:
+		free_if(4,name,gecos,home,shell);
+	}
+
+	fclose(conf);
+
+	return;
+}
+
+int main(int argc,const char *argv[])
+{
+	check(argc == 2,return -1,"Need configuration\n");
+
 	gLogStream = stderr;
+	FILE *group = fopen(CONF_PATH_GROUP,"r+");
+	load_group();
+
+	parse_conf(argv[1]);
+
+	group = fopen(CONF_PATH_GROUP,"w");
+	write_group();
 	return 0;
 }
