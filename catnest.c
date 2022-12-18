@@ -1,7 +1,7 @@
 /*
  *	catnest
  *	A substitution for systemd-sysusers
- *	Date:2022.11.30
+ *	Date:2022.12.17
  *	File:/catnest.c
  *	By MIT License.
  *	Copyright (c) 2022 Ziyao.
@@ -50,7 +50,8 @@ static void free_if(int num,...)
 	return;
 }
 
-static uid_t gMinUid = INT_MAX;
+// The least free ID
+static uid_t gMinId = INT_MAX;
 
 /*
  *	name:password:uid:gid:comment:home:shell
@@ -102,9 +103,8 @@ static struct passwd get_user_by_name(FILE *passwd,const char *name)
 }
 
 typedef struct {
-	char *name,*passwd;
+	char *name,*passwd,*members;
 	gid_t gid;
-	char *members;
 } Group;
 
 static gid_t gMinGid = INT_MAX;
@@ -114,9 +114,15 @@ static gid_t gMinGid = INT_MAX;
  */
 static inline Group next_group(FILE *groupFile)
 {
-	Group group;
-	fscanf(groupFile,"%ms:%ms:%d:%ms",&group.name,&group.passwd,
-	       &group.gid,&group.members);
+	Group group = {};
+	char *gid;
+	char **content[4] = {&group.name,&group.passwd,&gid,&group.members};
+	for (int i = 0;i < 4;i++) {
+		fscanf(groupFile,"%m[^:\n]",content[i]);
+		fgetc(groupFile);
+	}
+	group.gid = atoi(option(gid));
+	free_if(1,gid);
 	return group;
 }
 
@@ -141,16 +147,19 @@ static void extend_group()
 	gGroupList = realloc(gGroupList,
 			     sizeof(Group) * (gGroupListSize + 128));
 	check(gGroupList,exit(-1),"Cannot allocate memory");
+	memset(gGroupList + gGroupListSize,0,sizeof(Group) * 128);
 	gGroupListSize += 128;
 	return;
 }
 
 static void load_group(FILE *file)
 {
-	for (gGroupNum = 0,gGroupListSize = 0;!feof(file);gGroupNum++) {
+	gGroupNum = 0;
+	do {
 		extend_group();
 		gGroupList[gGroupNum] = next_group(file);
-	}
+		gGroupNum++;
+	} while(gGroupList[gGroupNum - 1].name);
 	gGroupNum--;
 	return;
 }
@@ -164,6 +173,24 @@ static void write_group(FILE *file)
 					     option(gGroupList[i].members));
 	}
 	return;
+}
+
+static int get_group_by_name(const char *name)
+{
+	for (int i = 0;i < gGroupNum;i++) {
+		if (!strcmp(gGroupList[i].name,name))
+			return i;
+	}
+	return gGroupNum;
+}
+
+static int get_group_by_id(gid_t id)
+{
+	for (int i = 0;i < gGroupNum;i++) {
+		if (gGroupList[i].gid == id)
+			return i;
+	}
+	return gGroupNum;
 }
 
 static void iterate_directory(const char *path,
@@ -208,9 +235,22 @@ static void parse_conf(const char *path,FILE *passwd)
 			next_line(conf);
 			goto nextLoop;
 		} else if (type == 'g') {
-			char *end = NULL;
-			int gid = (int)strtol(id,&end,10);
-			gid = *end ? gMinGid : gid;
+			gid_t gid = gMinId;
+			gMinId++;
+			if (id) {
+				char *end = NULL;
+				gid_t t = (int)strtol(id,&end,10);
+				if (!*end) {
+					gid = t;
+					gMinId = t + 1;
+				}
+			}
+
+			check(get_group_by_name(name) == gGroupNum &&
+			      get_group_by_id(gid)    == gGroupNum,
+			      goto nextLoop,
+			      "Duplicated group %s\n",name);
+
 
 			extend_group();
 			gGroupList[gGroupNum] = (Group) {
@@ -220,6 +260,12 @@ static void parse_conf(const char *path,FILE *passwd)
 					};
 
 			gGroupNum++;
+		} else if (type == 'r') {
+			uid_t lowest = 0,highest = 0;
+			check(sscanf(id,"%u%u",&lowest,&highest) != 2,
+			      goto nextLoop,
+			      "Invalid ID range %s",id);
+			gMinId = gMinId < lowest ? lowest : gMinId;
 		} else {
 			log("Unknow type %c\n",type);
 			goto nextLoop;
@@ -250,17 +296,17 @@ int main(int argc,const char *argv[])
 	for (struct passwd user = next_user(passwd);
 	     user.pw_name;
 	     user = next_user(passwd)) {
-		gMinUid = gMinUid > user.pw_uid ? user.pw_uid : gMinUid;
+		gMinId = gMinId > user.pw_uid ? user.pw_uid : gMinId;
 		passwd_destroy(user);
 	}
-	gMinUid = gMinUid == INT_MAX ? 0 : gMinUid;
+	gMinId = gMinId == INT_MAX ? 0 : gMinId;
 	fclose(passwd);
 
 	for (int i = 0;i < gGroupNum;i++) {
-		gMinGid = gMinGid > gGroupList[i].gid ?
-				gGroupList[i].gid : gMinGid;
+		gMinGid = gMinId > gGroupList[i].gid ?
+				gGroupList[i].gid : gMinId;
 	}
-	gMinGid = gMinGid == INT_MAX ? 0 : gMinGid;
+	gMinId = gMinId == INT_MAX ? 0 : gMinId;
 
 	passwd = fopen(CONF_PATH_PASSWD,"a");
 	check(passwd,return -1,"Cannot open passwd file %s\n",CONF_PATH_PASSWD);
