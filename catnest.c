@@ -152,7 +152,7 @@ typedef struct {
 static inline Group next_group(FILE *groupFile)
 {
 	Group group = { .name = NULL };
-	char *gid;
+	char *gid = NULL;
 	char **content[4] = {&group.name,&group.passwd,&gid,&group.members};
 	for (int i = 0;i < 4;i++) {
 		fscanf(groupFile,"%m[^:\n]",content[i]);
@@ -375,6 +375,7 @@ static inline int read_conf(FILE *conf,char *type,char **name,char **id,
 	do {
 		free(line);
 		size = 0;
+		line = NULL;
 		size = getline(&line,(size_t*)&size,conf);
 	} while (size > 0 && (*line == '#' || *line == '\n'));
 
