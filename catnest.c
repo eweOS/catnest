@@ -1,22 +1,26 @@
 /*
  *	catnest
  *	A substitution for systemd-sysusers
- *	Date:2022.12.21
+ *	Date:2023.01.29
  *	File:/catnest.c
  *	By MIT License.
- *	Copyright (c) 2022 Ziyao.
+ *	Copyright (c) 2022-2023 Ziyao.
  *	This program is a part of eweOS Project.
  */
 
 #define _POSIX_C_SOURCE 200809L
 #define _GNU_SOURCE
 
+#include<assert.h>
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
 #include<ctype.h>
 #include<stdarg.h>
 #include<limits.h>
+#include<stdbool.h>
+#include<stdint.h>
+#include<time.h>
 
 #include<sys/types.h>
 #include<unistd.h>
@@ -25,6 +29,8 @@
 
 #define CONF_PATH_PASSWD	"./passwd"
 #define CONF_PATH_GROUP		"./group"
+#define CONF_PATH_SHADOW	"./shadow"
+#define CONF_PATH_GSHADOW	"./gshadow"
 
 static FILE *gLogStream = NULL;
 #define check(assertion,action,...) do {				\
@@ -51,8 +57,26 @@ static void free_if(int num,...)
 	return;
 }
 
-// The least free ID
-static uid_t gMinId = INT_MAX;
+int *gIdUsed,gLastId;
+size_t gFreeId;
+static void id_init()
+{
+	gIdUsed = malloc(sizeof(int) * (1 << 16));
+	assert(gIdUsed);
+	memset(gIdUsed,0,sizeof(int) * (1 << 16));
+	return;
+}
+
+static int id_get()
+{
+	for (int i = gLastId;i < (1 << 16);i++) {
+		if (!gIdUsed[i]) {
+			gLastId = i ? i - 1 : i;
+			return i;
+		}
+	}
+	abort();
+}
 
 /*
  *	name:password:uid:gid:comment:home:shell
@@ -65,10 +89,14 @@ static inline struct passwd next_user(FILE *passwd)
 			     &strGid,&user.pw_gecos,&user.pw_dir,
 			     &user.pw_shell };
 	for (unsigned int i = 0;
-	     !feof(passwd) && i < sizeof(content) / sizeof(char **);
+	     i < sizeof(content) / sizeof(char **);
 	     i++) {
-		fscanf(passwd,"%m[^\n]",content[i]);
+		fscanf(passwd,"%m[^\n:]",content[i]);
 		fgetc(passwd);		// Skip the colon
+		if (feof(passwd))
+			return (struct passwd) {
+						.pw_name = NULL,
+					       };
 	}
 
 	user.pw_uid = atol(option(strUid));
@@ -93,6 +121,7 @@ static struct passwd get_user_by_uid(FILE *passwd,uid_t uid)
 	while (user.pw_name) {
 		if (user.pw_uid == uid)
 			break;
+		passwd_destroy(user);
 		user = next_user(passwd);
 	}
 	return user;
@@ -105,7 +134,7 @@ static struct passwd get_user_by_name(FILE *passwd,const char *name)
 	while (user.pw_name) {
 		if (!strcmp(user.pw_name,name))
 			break;
-
+		passwd_destroy(user);
 		user = next_user(passwd);
 	}
 	return user;
@@ -116,7 +145,6 @@ typedef struct {
 	gid_t gid;
 } Group;
 
-static gid_t gMinGid = INT_MAX;
 
 /*
  *	groupname:password:gid:userlist
@@ -173,12 +201,14 @@ static void load_group(FILE *file)
 	return;
 }
 
-static void write_group(FILE *file)
+static void write_group(FILE *file,FILE *gshadow)
 {
 	for (int i = 0;i < gGroupNum;i++) {
 		fprintf(file,"%s:%s:%u:%s\n",gGroupList[i].name,
 					     option(gGroupList[i].passwd),
 					     gGroupList[i].gid,
+					     option(gGroupList[i].members));
+		fprintf(gshadow,"%s:*::%s\n",gGroupList[i].name,
 					     option(gGroupList[i].members));
 	}
 	return;
@@ -224,21 +254,24 @@ static void iterate_directory(const char *path,
 
 static void add_group(const char *name,const char *id)
 {
-	gid_t gid = gMinId;
-	gMinId++;
+	gid_t gid = id_get();
 	if (id) {
 		char *end = NULL;
 		gid_t t = (int)strtol(id,&end,10);
 		if (!*end) {
 			gid = t;
-			gMinId = t + 1;
+			gIdUsed[t] = 1;
+		} else {
+			gIdUsed[gid] = 1;
 		}
+	} else {
+		gIdUsed[gid] = 1;
 	}
 
-	check(get_group_by_name(name) == gGroupNum &&
-	      get_group_by_id(gid)    == gGroupNum,
-	      return,
-	      "Duplicated group %s\n",name);
+	if (get_group_by_name(name) != gGroupNum)
+	      return;
+	check(get_group_by_id(gid) == gGroupNum,return,
+	      "Duplicated GID %d for group %s\n",gid,name);
 
 
 	extend_group();
@@ -268,21 +301,26 @@ static inline void add_user_to_group(int groupIndex,uid_t uid)
 }
 
 static inline void add_user(FILE *passwd,const char *name,const char *id,
-			    const char *gecos,const char *home,const char *shell)
+			    const char *gecos,const char *home,const char *shell,
+			    FILE *shadow)
 {
 	char *groupIdStr = NULL;
 	uid_t uid = strtol(id,&groupIdStr,10);
 
-	struct passwd tmp1 = get_user_by_name(passwd,name);
-	struct passwd tmp2 = get_user_by_uid(passwd,uid);
-	check(!tmp1.pw_name && !tmp2.pw_name,return,
-	      "Duplicated user %s\n",name);
-	passwd_destroy(tmp1);
-	passwd_destroy(tmp2);
+	struct passwd tmp = get_user_by_name(passwd,name);
+	if (tmp.pw_name)
+		return;
+	passwd_destroy(tmp);
+	if (id) {
+		tmp = get_user_by_uid(passwd,uid);
+		check(!tmp.pw_name,return,"Duplicated user %s\n",name);
+		passwd_destroy(tmp);
+	}
 
 	gid_t gid;
 	/*	Case 1: The group's id is specified	*/
 	if (*groupIdStr == ':') {
+		groupIdStr++;	// Skip the colon
 		int groupIndex = get_group_by_id(atol(groupIdStr));
 		check(groupIndex < gGroupNum,return;,
 		      "Group with GID %s doesn't exist\n",groupIdStr);
@@ -290,21 +328,23 @@ static inline void add_user(FILE *passwd,const char *name,const char *id,
 	} else {
 	/*	Case 2: Create group with the same name as the user  */
 		if (*groupIdStr == '-')
-			uid = gMinId;	// will be increased in add_group()
+			uid = id_get();	// will be increased in add_group()
 
 		int groupIndex = get_group_by_name(name);
 		if (groupIndex != gGroupNum) {
-			gid = gGroupList[groupIndex].gid;
-			uid++;		// won't add a new group
+			gid = gGroupList[groupIndex].gid;	// won't add a new group
+			gIdUsed[uid] = 1;
 		} else {
 			add_group(name,NULL);
 			gid = gGroupList[get_group_by_name(name)].gid;
 		}
 	}
 
-	fprintf(passwd,"%s::%u:%u:%s:%s:%s\n",name,uid,gid,gecos,
+	fprintf(passwd,"%s:x:%u:%u:%s:%s:%s\n",name,uid,gid,gecos,
 		home ? home : "/",shell ? shell :
 				  uid ? "/usr/sbin/nologin" : "/bin/sh");
+	fprintf(shadow,"%s:*:%lu:0:7:99999:::\n",name,
+		time(NULL) / (60 * 60 * 24));
 	return;
 }
 
@@ -331,12 +371,12 @@ static inline int read_conf(FILE *conf,char *type,char **name,char **id,
 	fskip_space(conf);
 	char *line = NULL;
 	ssize_t size = 0;
-	for (size = getline(&line,(size_t*)&size,conf);
-	     size > 0 && *line == '#';
-	     size = getline(&line,(size_t*)&size,conf)) {
+
+	do {
 		free(line);
 		size = 0;
-	}
+		size = getline(&line,(size_t*)&size,conf);
+	} while (size > 0 && (*line == '#' || *line == '\n'));
 
 	if (size < 0) {
 		ret = -1;
@@ -351,8 +391,14 @@ end:
 	return ret;
 }
 
-static void parse_conf(const char *path,FILE *passwd)
+typedef struct {
+	FILE *passwd,*shadow;
+} Parse_Conf_Arg;
+static void parse_conf(const char *path,void *in)
 {
+	Parse_Conf_Arg *arg = in;
+	FILE *passwd = arg->passwd;
+	FILE *shadow = arg->shadow;
 	FILE *conf = fopen(path,"r");
 	check(conf,return,"Cannot open configuration %s\n",path);
 
@@ -362,17 +408,12 @@ static void parse_conf(const char *path,FILE *passwd)
 	for (int num = read_conf(conf,&type,&name,&id,&gecos,&home,&shell);
 	     num != -1;
 	     num = read_conf(conf,&type,&name,&id,&gecos,&home,&shell)){
-		printf("type %c, name %s\n",type,name);
 		if (type == 'g') {
 			add_group(name,id);
 		} else if (type == 'u') {
-			 add_user(passwd,name,id,gecos,home,shell);
+			 add_user(passwd,name,id,gecos,home,shell,shadow);
 		} else if (type == 'r') {
-			uid_t lowest = 0,highest = 0;
-			check(sscanf(id,"%u%u",&lowest,&highest) != 2,
-			      goto nextLoop,
-			      "Invalid ID range %s",id);
-			gMinId = gMinId < lowest ? lowest : gMinId;
+			// Ignore
 		} else {
 			log("Unknow type %c\n",type);
 			goto nextLoop;
@@ -409,39 +450,49 @@ int main(int argc,const char *argv[])
 	check(group,return -1,"Cannot open group file %s\n",CONF_PATH_GROUP);
 	load_group(group);
 
+	id_init();
 	FILE *passwd = fopen(CONF_PATH_PASSWD,"r");
 	check(passwd,return -1,"Cannot open passwd file %s\n",CONF_PATH_PASSWD);
 	for (struct passwd user = next_user(passwd);
 	     user.pw_name;
 	     user = next_user(passwd)) {
-		gMinId = gMinId > user.pw_uid ? user.pw_uid : gMinId;
+		gIdUsed[user.pw_uid] = 1;
 		passwd_destroy(user);
 	}
-	gMinId = gMinId == INT_MAX ? 0 : gMinId;
 	fclose(passwd);
 
-	for (int i = 0;i < gGroupNum;i++) {
-		gMinGid = gMinId > gGroupList[i].gid ?
-				gGroupList[i].gid : gMinId;
-	}
-	gMinId = gMinId == INT_MAX ? 0 : gMinId;
+	for (int i = 0;i < gGroupNum;i++)
+		gIdUsed[gGroupList[i].gid] = 1;
 
 	passwd = fopen(CONF_PATH_PASSWD,"a+");
 	check(passwd,return -1,"Cannot open passwd file %s\n",CONF_PATH_PASSWD);
 
+	FILE *shadow = fopen(CONF_PATH_SHADOW,"a+");
+	check(shadow,return -1,"Cannot open shadow file %s\n",
+	      CONF_PATH_SHADOW);
+
+	Parse_Conf_Arg arg = {
+				.passwd	= passwd,
+				.shadow	= shadow,
+			     };
 	for (int i = 1;i < argc;i++) {
 		if (!strcmp(argv[i],"--help")) {
 			print_help(argv[0]);
 		} else {
-			parse_conf(argv[i],passwd);
+			parse_conf(argv[i],(void*)&arg);
 		}
 	}
-	iterate_directory("/etc/sysusers.d",parse_conf,passwd);
-	iterate_directory("/usr/lib/sysusers.d",parse_conf,passwd);
+//	iterate_directory("/etc/sysusers.d",parse_conf,(void*)arg);
+//	iterate_directory("/usr/lib/sysusers.d",parse_conf,(void*)arg);
 
 	group = fopen(CONF_PATH_GROUP,"w");
-	write_group(group);
+	FILE *gshadow = fopen(CONF_PATH_GSHADOW,"w");
+	check(gshadow,return -1,"Cannot open gshadow file %s\n",
+	      CONF_PATH_GSHADOW);
+	write_group(group,gshadow);
 	fclose(group);
 	fclose(passwd);
+	fclose(shadow);
+	fclose(gshadow);
 	return 0;
 }
