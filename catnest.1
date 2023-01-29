@@ -1,0 +1,34 @@
+.TH catnest "1" "eweOS Project" "catnest"
+
+.SH NAME
+.TP
+catnest \- A substitution for systemd-sysusers
+
+.SH SYNOPSIS
+	catnest [options] [CONFIGURATION]
+
+.SH OPTIONS
+
+.TP
+.B
+--help
+.RS
+show the help
+.RE
+
+.SH Difference from systemd-sysusers
+catnest supports option 'u' and 'g' only, 'r' is ignored now. File paths
+in ID field are not supported. All GECOS need to be quoted, even it does NOT
+content a blank character. gshadow files are not completely supported, but
+catnest will append to it when needed. All existed group passwords will be
+ERASED.
+
+.SH SEE ALSO
+.TP
+systemd-sysusers(1)
+
+.SH COPYRIGHT
+.TP
+Copyright (c) 2022-2023 Ziyao.
+.TP
+This program is distributed under MIT License and is a part of eweOS Project.

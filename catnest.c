@@ -27,10 +27,10 @@
 #include<pwd.h>
 #include<dirent.h>
 
-#define CONF_PATH_PASSWD	"./passwd"
-#define CONF_PATH_GROUP		"./group"
-#define CONF_PATH_SHADOW	"./shadow"
-#define CONF_PATH_GSHADOW	"./gshadow"
+#define CONF_PATH_PASSWD	"/etc/passwd"
+#define CONF_PATH_GROUP		"/etc/group"
+#define CONF_PATH_SHADOW	"/etc/shadow"
+#define CONF_PATH_GSHADOW	"/etc/gshadow"
 
 static FILE *gLogStream = NULL;
 #define check(assertion,action,...) do {				\
@@ -476,15 +476,20 @@ int main(int argc,const char *argv[])
 				.passwd	= passwd,
 				.shadow	= shadow,
 			     };
+	int isConfSpecified = 0;
 	for (int i = 1;i < argc;i++) {
 		if (!strcmp(argv[i],"--help")) {
 			print_help(argv[0]);
 		} else {
 			parse_conf(argv[i],(void*)&arg);
+			isConfSpecified = 1;
 		}
 	}
-//	iterate_directory("/etc/sysusers.d",parse_conf,(void*)arg);
-//	iterate_directory("/usr/lib/sysusers.d",parse_conf,(void*)arg);
+
+	if (!isConfSpecified) {
+		iterate_directory("/etc/sysusers.d",parse_conf,(void*)&arg);
+		iterate_directory("/usr/lib/sysusers.d",parse_conf,(void*)&arg);
+	}
 
 	group = fopen(CONF_PATH_GROUP,"w");
 	FILE *gshadow = fopen(CONF_PATH_GSHADOW,"w");
