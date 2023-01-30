@@ -1,7 +1,7 @@
 /*
  *	catnest
  *	A substitution for systemd-sysusers
- *	Date:2023.01.29
+ *	Date:2023.01.30
  *	File:/catnest.c
  *	By MIT License.
  *	Copyright (c) 2022-2023 Ziyao.
@@ -311,7 +311,7 @@ static inline void add_user(FILE *passwd,const char *name,const char *id,
 	if (tmp.pw_name)
 		return;
 	passwd_destroy(tmp);
-	if (id) {
+	if (id && *id != '-') {
 		tmp = get_user_by_uid(passwd,uid);
 		check(!tmp.pw_name,return,"Duplicated user %s\n",name);
 		passwd_destroy(tmp);
