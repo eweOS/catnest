@@ -1,7 +1,7 @@
 /*
  *	catnest
  *	A substitution for systemd-sysusers
- *	Date:2023.01.30
+ *	Date:2023.01.31
  *	File:/catnest.c
  *	By MIT License.
  *	Copyright (c) 2022-2023 Ziyao.
@@ -27,10 +27,10 @@
 #include<pwd.h>
 #include<dirent.h>
 
-#define CONF_PATH_PASSWD	"/etc/passwd"
-#define CONF_PATH_GROUP		"/etc/group"
-#define CONF_PATH_SHADOW	"/etc/shadow"
-#define CONF_PATH_GSHADOW	"/etc/gshadow"
+#define CONF_PATH_PASSWD	"./passwd"
+#define CONF_PATH_GROUP		"./group"
+#define CONF_PATH_SHADOW	"./shadow"
+#define CONF_PATH_GSHADOW	"./gshadow"
 
 static FILE *gLogStream = NULL;
 #define check(assertion,action,...) do {				\
@@ -53,6 +53,35 @@ static void free_if(int num,...)
 			free(p);
 	}
 	va_end(list);
+
+	return;
+}
+
+static void copy_file(const char *dest,const char *src)
+{
+	FILE *in = fopen(src,"r");
+	FILE *out = fopen(dest,"w");
+	check(in && out,exit(-1),"Cannot copy %s to %s",src,dest);
+
+	for (int c = fgetc(in); c != EOF;c = fgetc(in))
+		fputc(c,out);
+
+	fclose(in);
+	fclose(out);
+	return;
+}
+
+int gConfDirty;
+void modify_file(void)
+{
+	if (gConfDirty)
+		return;
+
+	gConfDirty = 1;
+	copy_file(CONF_PATH_GROUP "-",CONF_PATH_GROUP);
+	copy_file(CONF_PATH_PASSWD "-",CONF_PATH_PASSWD);
+	copy_file(CONF_PATH_SHADOW "-",CONF_PATH_SHADOW);
+	copy_file(CONF_PATH_GSHADOW "-",CONF_PATH_GSHADOW);
 
 	return;
 }
@@ -274,6 +303,7 @@ static void add_group(const char *name,const char *id)
 	      "Duplicated GID %d for group %s\n",gid,name);
 
 
+	modify_file();
 	extend_group();
 	gGroupList[gGroupNum] = (Group) {
 				.name	= strdup(name),
@@ -340,6 +370,7 @@ static inline void add_user(FILE *passwd,const char *name,const char *id,
 		}
 	}
 
+	modify_file();
 	fprintf(passwd,"%s:x:%u:%u:%s:%s:%s\n",name,uid,gid,gecos,
 		home ? home : "/",shell ? shell :
 				  uid ? "/usr/sbin/nologin" : "/bin/sh");
