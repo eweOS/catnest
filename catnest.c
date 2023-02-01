@@ -1,7 +1,7 @@
 /*
  *	catnest
  *	A substitution for systemd-sysusers
- *	Date:2023.01.31
+ *	Date:2023.02.01
  *	File:/catnest.c
  *	By MIT License.
  *	Copyright (c) 2022-2023 Ziyao.
@@ -27,10 +27,10 @@
 #include<pwd.h>
 #include<dirent.h>
 
-#define CONF_PATH_PASSWD	"./passwd"
-#define CONF_PATH_GROUP		"./group"
-#define CONF_PATH_SHADOW	"./shadow"
-#define CONF_PATH_GSHADOW	"./gshadow"
+#define CONF_PATH_PASSWD	"/etc/passwd"
+#define CONF_PATH_GROUP		"/etc/group"
+#define CONF_PATH_SHADOW	"/etc/shadow"
+#define CONF_PATH_GSHADOW	"/etc/gshadow"
 
 static FILE *gLogStream = NULL;
 #define check(assertion,action,...) do {				\
@@ -261,6 +261,11 @@ static int get_group_by_id(gid_t id)
 	return gGroupNum;
 }
 
+static int string_compare(const void *in1,const void *in2)
+{
+	return strcmp(*(char**)in1,*(char**)in2);
+}
+
 static void iterate_directory(const char *path,
 			      void (*callback)(const char *path,void *ctx),
 			      void *ctx)
@@ -269,14 +274,31 @@ static void iterate_directory(const char *path,
 	check(root,return,"Cannot open directory %s\n",path);
 
 	chdir(path);
+
+	char **list = NULL;
+	int n = 0;
 	for (struct dirent *dir = readdir(root);dir;dir = readdir(root)) {
 		if (dir->d_name[0] == '.')
 			continue;
 
-		callback(dir->d_name,ctx);
-	}
+		if (!(n % 64)) {
+			list = realloc(list,sizeof(char*) * (n + 64));
+			check(list,exit(-1),
+			      "Cannot allocate memory for directory list");
+		}
 
+		list[n] = strdup(dir->d_name);
+		n++;
+	}
 	closedir(root);
+
+	qsort(list,n,sizeof(char*),string_compare);
+	for (int i = 0;i < n;i++) {
+		callback(list[i],ctx);
+		free(list[i]);
+	}
+	free(list);
+
 	chdir("..");
 	return;
 }
@@ -516,6 +538,7 @@ int main(int argc,const char *argv[])
 			isConfSpecified = 1;
 		}
 	}
+
 
 	if (!isConfSpecified) {
 		iterate_directory("/etc/sysusers.d",parse_conf,(void*)&arg);
