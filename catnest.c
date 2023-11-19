@@ -11,13 +11,40 @@
 #include<ctype.h>
 #include<stdarg.h>
 
+#ifdef __CATNEST_DEBUG__
+
+#define PATH_PASSWD	"./passwd"
+#define PATH_GROUP	"./group"
+
+#endif	// __CATNEST_DEBUG__
+
 #define do_if(cond, action) do { \
 	if (cond) {					\
 		action;					\
 	}						\
 } while (0)
 
+#define frees(...) do { \
+	void *_pList[] = { __VA_ARGS__ };					\
+	for (unsigned int i = 0; i < sizeof(_pList) / sizeof(void *); i++)	\
+		free(_pList[i]);					\
+} while (0)
+
 #define check(cond, ...) do_if(!(cond), do_log(__VA_ARGS__); exit(-1))
+
+typedef struct {
+	char *name;
+	char *passwd;
+	unsigned long int uid, gid;
+	char *gecos;
+	char *home;
+	char *shell;
+} User_Entry;
+
+struct {
+	User_Entry	*users;
+	size_t		userNum, listSize;
+} gUserList;
 
 void
 do_log(const char *fmt, ...)
@@ -49,6 +76,16 @@ until_space(const char *p)
 	while (!is_space(*p) && *p)
 		p++;
 	return p;
+}
+
+char *
+strdup_f(const char *s)
+{
+	if (!s)
+		return NULL;
+	char *copy = strdup(s);
+	check(copy, "Failed to allocate memory for duplicated string\n");
+	return copy;
 }
 
 void
@@ -133,10 +170,90 @@ parse_sysuser_conf(const char *path)
 	return;
 }
 
+static void
+expand_user_list(void)
+{
+	if (gUserList.userNum == gUserList.listSize) {
+		gUserList.listSize += 256;
+		gUserList.users = realloc(gUserList.users,
+					  sizeof(User_Entry) *
+					  	gUserList.listSize);
+		check(gUserList.users,
+		      "Failed to allocate memory for user list");
+	}
+	return;
+}
+
+static void
+add_user(User_Entry *entry)
+{
+	User_Entry u = *entry;
+	expand_user_list();
+
+	u.name		= strdup_f(u.name);
+	u.passwd	= strdup_f(u.passwd);
+	u.gecos		= strdup_f(u.gecos);
+	u.home		= strdup_f(u.home);
+	u.shell		= strdup_f(u.shell);
+
+	gUserList.users[gUserList.userNum] = u;
+	gUserList.userNum++;
+	return;
+}
+
+void
+load_passwd(void)
+{
+	FILE *passwd = fopen(PATH_PASSWD, "r");
+
+	char *line	= NULL;
+	size_t length	= 0;
+	while (getline(&line, &length, passwd) > 0) {
+		if (length > 0 && line[strlen(line) - 1] == '\n')
+			line[strlen(line) - 1] = '\0';
+
+		User_Entry u = { NULL };
+		char *suid, *sgid;
+		char **p[] = {
+				&u.name, &u.passwd, &suid, &sgid, &u.gecos,
+				&u.home, &u.shell, NULL
+			    };
+		int i = 0;
+		for (char *part = strtok(line, ":"); i < 7; i++) {
+			*p[i] = part;
+			part = strtok(NULL, ":");
+		}
+
+		check(i == 7, "misformed line in passwd");
+
+		printf("name: %s, passwd %s, uid %lu. gid %lu, gecos %s"
+		       " home %s, shell %s\n",
+		       u.name, u.passwd, u.uid, u.gid, u.gecos, u.home, u.shell);
+		add_user(&u);
+		free(line);
+		line = NULL;
+	}
+	free(line);
+
+	fclose(passwd);
+}
+
+void
+unload_passwd(void)
+{
+	for (size_t i = 0; i < gUserList.userNum; i++) {
+		User_Entry *u = gUserList.users + i;
+		frees(u->name, u->passwd, u->gecos, u->home, u->shell);
+	}
+	free(gUserList.users);
+}
+
 int
 main(int argc, const char *argv[])
 {
 	do_if(argc != 2, return -1);
+	load_passwd();
+	unload_passwd();
 	parse_sysuser_conf(argv[1]);
 	return 0;
 }
