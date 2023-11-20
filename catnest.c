@@ -5,6 +5,7 @@
  *	Copyright (c) 2023 Yao Zi. All rights reserved.
  */
 
+#include<assert.h>
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
@@ -86,6 +87,27 @@ strdup_f(const char *s)
 	char *copy = strdup(s);
 	check(copy, "Failed to allocate memory for duplicated string\n");
 	return copy;
+}
+
+char *
+str_split(char *s, const char *delim)
+{
+	static char *old = NULL;
+	if (s)
+		old = s;
+	assert(old);
+	if (!*old)
+		return NULL;
+
+	char *start = old;
+	for (; *old; old++) {
+		if (strchr(delim, *old)) {
+			*old = '\0';
+			old++;
+			return start;
+		}
+	}
+	return start;
 }
 
 void
@@ -219,12 +241,12 @@ load_passwd(void)
 				&u.home, &u.shell, NULL
 			    };
 		int i = 0;
-		for (char *part = strtok(line, ":"); i < 7; i++) {
+		for (char *part = str_split(line, ":"); part && i < 7; i++) {
 			*p[i] = part;
-			part = strtok(NULL, ":");
+			part = str_split(NULL, ":");
 		}
 
-		check(i == 7, "misformed line in passwd");
+		check(i == 7, "misformed line in passwd\n");
 
 		printf("name: %s, passwd %s, uid %lu. gid %lu, gecos %s"
 		       " home %s, shell %s\n",
