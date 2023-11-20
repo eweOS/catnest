@@ -19,6 +19,9 @@
 
 #endif	// __CATNEST_DEBUG__
 
+#define ID_RANGE_START	0
+#define ID_RANGE_END	65536
+
 #define do_if(cond, action) do { \
 	if (cond) {					\
 		action;					\
@@ -46,6 +49,16 @@ struct {
 	User_Entry	*users;
 	size_t		userNum, listSize;
 } gUserList;
+
+typedef struct ID_Range {
+	unsigned long int start, end;
+	struct ID_Range *next;
+} ID_Range;
+
+struct {
+	unsigned long int start, end;
+	ID_Range *ranges;
+} gIDPool;
 
 void
 do_log(const char *fmt, ...)
@@ -246,6 +259,9 @@ load_passwd(void)
 			part = str_split(NULL, ":");
 		}
 
+		u.uid = strtol(suid, NULL, 0);
+		u.gid = strtol(sgid, NULL, 0);
+
 		check(i == 7, "misformed line in passwd\n");
 
 		printf("name: %s, passwd %s, uid %lu. gid %lu, gecos %s"
@@ -270,12 +286,94 @@ unload_passwd(void)
 	free(gUserList.users);
 }
 
+static ID_Range *
+idpool_new_range(unsigned long int start,
+		 unsigned long int end,
+		 ID_Range *next)
+{
+	ID_Range *range = malloc(sizeof(ID_Range));
+	check(range, "failed to allocate memory for id range\n");
+	*range = (ID_Range) {
+				.start	= start,
+				.end	= end,
+				.next	= next,
+			      };
+	return range;
+}
+
+void
+idpool_use(unsigned long int id)
+{
+	check(id >= gIDPool.start && id <= gIDPool.end,
+	      "required id out of valid range\n");
+	check(gIDPool.ranges, "no ID available");
+
+	ID_Range *r = gIDPool.ranges, **lastNext = &gIDPool.ranges;
+	while (r && !(id >= r->start && id <= r->end)) {
+		lastNext = &r->next;
+		r = r->next;
+	}
+
+	check(r && id >= r->start && id <= r->end,
+	      "id %lu is not available\n", id);
+
+	if (id == r->start || id == r->end) {
+		r->start++;
+	} else if (id == r->end) {
+		r->end--;
+	} else {
+		ID_Range *new = idpool_new_range(id + 1, r->end, r->next);
+		r->end = id - 1;
+		r->next = new;
+	}
+
+	if (r->start > r->end) {
+		*lastNext = r->next;
+		free(r);
+	}
+
+	return;
+}
+
+void
+idpool_init(unsigned long int start, unsigned long int end)
+{
+	gIDPool.ranges	= idpool_new_range(start, end, NULL);
+	gIDPool.start	= start;
+	gIDPool.end	= end;
+
+	for (size_t i = 0; i < gUserList.userNum; i++) {
+		unsigned long int id = gUserList.users[i].uid;
+		if (id >= start || id <= end)
+			idpool_use(id);
+	}
+
+	return;
+}
+
+void
+idpool_destroy(void)
+{
+	ID_Range *range = gIDPool.ranges;
+	while (range) {
+		ID_Range *next = range->next;
+		free(range);
+		range = next;
+	}
+	return;
+}
+
 int
 main(int argc, const char *argv[])
 {
 	do_if(argc != 2, return -1);
+
 	load_passwd();
-	unload_passwd();
+
+	idpool_init(ID_RANGE_START, ID_RANGE_END);
+	idpool_destroy();
+
 	parse_sysuser_conf(argv[1]);
+	unload_passwd();
 	return 0;
 }
