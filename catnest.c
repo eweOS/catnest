@@ -50,6 +50,18 @@ struct {
 	size_t		userNum, listSize;
 } gUserList;
 
+typedef struct {
+	char *name;
+	char *passwd;
+	unsigned long int gid;
+	char *members;
+} Group_Entry;
+
+struct {
+	Group_Entry	*groups;
+	size_t		groupNum, listSize;
+} gGroupList;
+
 typedef struct ID_Range {
 	unsigned long int start, end;
 	struct ID_Range *next;
@@ -121,6 +133,14 @@ str_split(char *s, const char *delim)
 		}
 	}
 	return start;
+}
+
+char *
+remove_trailing_newline(char *s)
+{
+	if (strlen(s) > 0 && s[strlen(s) - 1] == '\n')
+		s[strlen(s) - 1] = '\0';
+	return s;
 }
 
 void
@@ -244,8 +264,7 @@ load_passwd(void)
 	char *line	= NULL;
 	size_t length	= 0;
 	while (getline(&line, &length, passwd) > 0) {
-		if (length > 0 && line[strlen(line) - 1] == '\n')
-			line[strlen(line) - 1] = '\0';
+		remove_trailing_newline(line);
 
 		User_Entry u = { NULL };
 		char *suid, *sgid;
@@ -284,6 +303,90 @@ unload_passwd(void)
 		frees(u->name, u->passwd, u->gecos, u->home, u->shell);
 	}
 	free(gUserList.users);
+}
+
+void
+expand_group_list(void)
+{
+	if (gGroupList.groupNum == gGroupList.listSize) {
+		gGroupList.listSize += 256;
+		gGroupList.groups =
+			realloc(gGroupList.groups,
+				sizeof(Group_Entry) * gGroupList.listSize);
+		check(gGroupList.groups,
+		      "cannot allocate memory for group list");
+	}
+
+	return;
+}
+
+void
+add_group(Group_Entry *group)
+{
+	expand_group_list();
+
+	Group_Entry g = *group;
+	g.name		= strdup_f(g.name);
+	g.passwd	= strdup_f(g.name);
+	g.members	= strdup_f(g.members);
+
+	gGroupList.groups[gGroupList.groupNum] = g;
+	gGroupList.groupNum++;
+
+	return;
+}
+
+void
+load_group(void)
+{
+	FILE *groupf = fopen(PATH_GROUP, "r");
+	check(groupf, "cannot open group file\n");
+
+	char *line = NULL;
+	size_t length;
+	while (getline(&line, &length, groupf) > 0) {
+		remove_trailing_newline(line);
+
+		Group_Entry g = { NULL };
+		char *gid = NULL;
+		char **p[] = { &g.name, &g.passwd, &gid, &g.members };
+
+		int i = 0;
+		for (char *part = str_split(line, ":"); part && i < 4; i++) {
+			*p[i] = part;
+			part = str_split(NULL, ":");
+		}
+
+		if (i == 3) {
+			i++;
+			g.members = "";
+		}
+
+		check(i == 4, "misformed line in group\n");
+
+		g.gid = strtol(gid, NULL, 0);
+
+		add_group(&g);
+
+		printf("name %s, passwd %s, gid %lu, members %s\n",
+		       g.name, g.passwd, g.gid, g.members);
+
+		free(line);
+		line = NULL;
+	}
+	free(line);
+
+	fclose(groupf);
+}
+
+void
+unload_group(void)
+{
+	for (size_t i = 0; i < gGroupList.groupNum; i++) {
+		Group_Entry *g = gGroupList.groups + i;
+		frees(g->name, g->passwd, g->members);
+	}
+	free(gGroupList.groups);
 }
 
 static ID_Range *
@@ -335,6 +438,13 @@ idpool_use(unsigned long int id)
 	return;
 }
 
+unsigned long int
+idpool_get(void)
+{
+	check(gIDPool.ranges, "no id available\n");
+	return gIDPool.ranges->start;
+}
+
 void
 idpool_init(unsigned long int start, unsigned long int end)
 {
@@ -369,11 +479,13 @@ main(int argc, const char *argv[])
 	do_if(argc != 2, return -1);
 
 	load_passwd();
+	load_group();
 
 	idpool_init(ID_RANGE_START, ID_RANGE_END);
 	idpool_destroy();
 
 	parse_sysuser_conf(argv[1]);
+	unload_group();
 	unload_passwd();
 	return 0;
 }
