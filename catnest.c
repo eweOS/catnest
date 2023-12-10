@@ -378,11 +378,17 @@ load_passwd(void)
 void
 unload_passwd(void)
 {
+	FILE *fp = fopen(PATH_PASSWD, "w");
+	check(fp, "Cannot open passwd file %s for writing", PATH_PASSWD);
 	for (size_t i = 0; i < gUserList.userNum; i++) {
 		User_Entry *u = gUserList.users + i;
+		fprintf(fp, "%s:%s:%lu:%lu:%s:%s:%s\n",
+			u->name, u->passwd, u->uid, u->gid, u->gecos,
+			u->home, u->shell);
 		frees(u->name, u->passwd, u->gecos, u->home, u->shell);
 	}
 	free(gUserList.users);
+	fclose(fp);
 }
 
 void
@@ -407,7 +413,7 @@ add_group(Group_Entry *group)
 
 	Group_Entry g = *group;
 	g.name		= strdup_f(g.name);
-	g.passwd	= strdup_f(g.name);
+	g.passwd	= strdup_f(g.passwd);
 	g.members	= strdup_f(g.members);
 
 	gGroupList.groups[gGroupList.groupNum] = g;
@@ -471,11 +477,16 @@ load_group(void)
 void
 unload_group(void)
 {
+	FILE *fp = fopen(PATH_GROUP, "w");
+	check(fp, "Cannot open group file %s for writing\n", PATH_GROUP);
 	for (size_t i = 0; i < gGroupList.groupNum; i++) {
 		Group_Entry *g = gGroupList.groups + i;
+		fprintf(fp, "%s:%s:%lu:%s\n",
+			g->name, g->passwd, g->gid, g->members);
 		frees(g->name, g->passwd, g->members);
 	}
 	free(gGroupList.groups);
+	fclose(fp);
 }
 
 static ID_Range *
