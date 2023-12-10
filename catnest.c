@@ -11,6 +11,7 @@
 #include<string.h>
 #include<ctype.h>
 #include<stdarg.h>
+#include<stdbool.h>
 
 #ifdef __CATNEST_DEBUG__
 
@@ -177,14 +178,15 @@ remove_trailing_newline(char *s)
 void
 set_id_range(char *conf[5])
 {
-	warn_if(!conf[1], DO_RETURN, "A range must be specified for type 'r'");
+	warn_if(!conf[1], DO_RETURN,
+		"A range must be specified for type 'r'\n");
 	char *sEnd = NULL;
 	unsigned long int start = strtol(conf[1], &sEnd, 0);
-	warn_if(*sEnd != '-', DO_RETURN, "Invalid range for type 'r'");
+	warn_if(*sEnd != '-', DO_RETURN, "Invalid range for type 'r'\n");
 	sEnd++;
-	warn_if(!*sEnd, DO_RETURN, "Invalid range for type 'r'");
+	warn_if(!*sEnd, DO_RETURN, "Invalid range for type 'r'\n");
 	unsigned long int end = strtol(sEnd, &sEnd, 0);
-	warn_if(*sEnd || end < start, DO_RETURN, "Invalid range for type 'r'");
+	warn_if(*sEnd || end < start, DO_RETURN, "Invalid range for type 'r'\n");
 
 	gIDRangeStart	= start;
 	gIDRangeEnd	= end;
@@ -336,10 +338,32 @@ add_user(User_Entry *entry)
 	return;
 }
 
+User_Entry *
+get_user_by_name(const char *name)
+{
+	for (size_t i = 0; i < gUserList.userNum; i++) {
+		if (!strcmp(name, gUserList.users[i].name))
+			return gUserList.users + i;
+	}
+	return NULL;
+}
+
+User_Entry *
+get_user_by_id(unsigned long int uid)
+{
+	for (size_t i = 0; i < gUserList.userNum; i++) {
+		if (gUserList.users[i].uid == uid)
+			return gUserList.users + i;
+	}
+	return NULL;
+}
+
 void
 load_passwd(void)
 {
 	FILE *passwd = fopen(PATH_PASSWD, "r");
+	check(passwd, "Cannot open passwd file %s for reading\n",
+	      PATH_PASSWD);
 
 	char *line	= NULL;
 	size_t length	= 0;
@@ -422,6 +446,26 @@ add_group(Group_Entry *group)
 	return;
 }
 
+Group_Entry *
+get_group_by_name(const char *name)
+{
+	for (size_t i = 0; i < gGroupList.groupNum; i++) {
+		if (!strcmp(gGroupList.groups[i].name, name))
+			return gGroupList.groups + i;
+	}
+	return NULL;
+}
+
+Group_Entry *
+get_group_by_id(unsigned long int gid)
+{
+	for (size_t i = 0; i < gGroupList.groupNum; i++) {
+		if (gGroupList.groups[i].gid == gid)
+			return gGroupList.groups + i;
+	}
+	return NULL;
+}
+
 int
 is_in_group(const Group_Entry *group, const User_Entry *user)
 {
@@ -435,7 +479,8 @@ void
 load_group(void)
 {
 	FILE *groupf = fopen(PATH_GROUP, "r");
-	check(groupf, "cannot open group file\n");
+	check(groupf, "Cannot open group file %s for reading\n",
+	      PATH_GROUP);
 
 	char *line = NULL;
 	size_t length;
@@ -574,10 +619,134 @@ idpool_destroy(void)
 }
 
 void
+do_action_add_user(Action *a)
+{
+	/*	The user already exists		*/
+	if (get_user_by_name(a->name))
+		return;
+
+	unsigned long int uid, gid;
+	bool ok = false, gidSpecified = false;
+	if (a->id) {
+		char *end = NULL;
+		uid = strtol(a->id, &end, 0);
+
+		if (*end == ':') {
+			end++;
+			warn_if(!*end, DO_RETURN,
+				"Invalid UID:GID pair %s\n", a->id);
+			gid = strtol(a->id, &end, 0);
+			warn_if(!*end, DO_RETURN,
+				"Invalid UID:GID pair %s\n", a->id);
+			gidSpecified = true;
+		} else {
+			warn_if(*end, DO_RETURN,
+				"Invalid UID %s", a->id);
+		}
+
+		ok = !get_user_by_id(uid);
+	}
+
+	if (!ok && gidSpecified) {
+		if (!get_user_by_id(gid)) {
+			uid	= gid;
+			ok	= true;
+		}
+	}
+
+	if (!ok) {
+		uid = idpool_get();
+		idpool_use(uid);
+	}
+
+	if (gidSpecified) {
+		if (!get_group_by_id(gid)) {
+			add_group(&(Group_Entry)
+				{
+					.name		= a->name,
+					.gid		= gid,
+					.passwd		= "!",
+					.members	= "",
+				});
+		}
+	} else {
+		Group_Entry *group = get_group_by_name(a->name);
+		if (group) {
+			gid = group->gid;
+		} else {
+			if (!get_group_by_id(uid)) {
+				gid = uid;
+			} else {
+				gid = idpool_get();
+				idpool_use(gid);
+				add_group(&(Group_Entry)
+					{
+						.name		= a->name,
+						.gid		= gid,
+						.passwd		= "!",
+						.members	= "",
+					});
+			}
+		}
+	}
+
+	add_user(&(User_Entry) {
+					.name	= a->name,
+					.passwd	= "!",
+					.uid	= uid,
+					.gid	= gid,
+					.gecos	= a->gecos,
+					.home	= a->home ? a->home : "/",
+					.shell	= a->shell	? a->shell  :
+						  uid == 0	? "/bin/sh" :
+						  	"/usr/sbin/nologin",
+				});
+
+	return;
+}
+
+void
+do_action_add_group(Action *a)
+{
+	if (get_group_by_name(a->name))
+		return;
+
+	unsigned long int gid;
+	if (a->id) {
+		char *end = NULL;
+		gid = strtol(a->id, &end, 0);
+		warn_if(*end, DO_RETURN, "Invalid GID %s\n", a->id);
+	} else {
+		gid = idpool_get();
+		idpool_use(gid);
+	}
+
+	add_group(&(Group_Entry) {
+					.name		= a->name,
+					.passwd		= "!",
+					.gid		= gid,
+					.members	= "",
+				 });
+	return;
+}
+
+void
 do_action(Action *a)
 {
 	printf("%c: %s | %s | %s | %s | %s\n", a->type,
 	       a->name, a->id, a->gecos, a->home, a->shell);
+
+	switch (a->type) {
+	case 'u':
+		do_action_add_user(a);
+		break;
+	case 'g':
+		do_action_add_group(a);
+		break;
+	case 'm':
+		do_log("Type m is not supported\n");
+		break;
+	}
 
 	return;
 }
@@ -612,12 +781,12 @@ main(int argc, const char *argv[])
 	load_group();
 
 	idpool_init(gIDRangeStart, gIDRangeEnd);
-	idpool_destroy();
 
 	parse_sysuser_conf(argv[1]);
 
 	do_actions();
 
+	idpool_destroy();
 	unload_group();
 	unload_passwd();
 	return 0;
