@@ -35,6 +35,19 @@
 } while (0)
 
 #define check(cond, ...) do_if(!(cond), do_log(__VA_ARGS__); exit(-1))
+#define warn_if(cond, action, ...) do_if(cond, do_log(__VA_ARGS__); action)
+#define DO_RETURN return;
+
+#define expand_list(list, entry, num, size) do {			\
+	if (list.num == list.size) {					\
+		list.size += 256;					\
+		list.entry = realloc(list.entry,			\
+				     sizeof(*list.entry) *		\
+				     	   list.size);			\
+		check(list.entry,					\
+		      "Failed to alloate memory for " #list "\n");	\
+	}								\
+} while (0)
 
 typedef struct {
 	char *name;
@@ -62,6 +75,22 @@ struct {
 	size_t		groupNum, listSize;
 } gGroupList;
 
+typedef struct {
+	char type;
+	char *name;
+	char *id;
+	char *gecos;
+	char *home;
+	char *shell;
+} Action;
+
+struct {
+	Action *special;	// Entries with id speicifed
+	Action *other;
+	size_t specialSize, specialNum;
+	size_t otherSize, otherNum;
+} gActionList;
+
 typedef struct ID_Range {
 	unsigned long int start, end;
 	struct ID_Range *next;
@@ -71,6 +100,8 @@ struct {
 	unsigned long int start, end;
 	ID_Range *ranges;
 } gIDPool;
+
+unsigned long int gIDRangeStart = ID_RANGE_START, gIDRangeEnd = ID_RANGE_END;
 
 void
 do_log(const char *fmt, ...)
@@ -144,6 +175,53 @@ remove_trailing_newline(char *s)
 }
 
 void
+set_id_range(char *conf[5])
+{
+	warn_if(!conf[1], DO_RETURN, "A range must be specified for type 'r'");
+	char *sEnd = NULL;
+	unsigned long int start = strtol(conf[1], &sEnd, 0);
+	warn_if(*sEnd != '-', DO_RETURN, "Invalid range for type 'r'");
+	sEnd++;
+	warn_if(!*sEnd, DO_RETURN, "Invalid range for type 'r'");
+	unsigned long int end = strtol(sEnd, &sEnd, 0);
+	warn_if(*sEnd || end < start, DO_RETURN, "Invalid range for type 'r'");
+
+	gIDRangeStart	= start;
+	gIDRangeEnd	= end;
+
+	return;
+}
+
+
+void
+add_action(char opt, char *conf[5])
+{
+	if (opt == 'r') {
+		set_id_range(conf);
+		return;
+	}
+
+	Action a = {
+			.type	= opt,
+			.name	= strdup_f(conf[0]),
+			.id	= strdup_f(conf[1]),
+			.gecos	= strdup_f(conf[2]),
+			.home	= strdup_f(conf[3]),
+			.shell	= strdup_f(conf[4]),
+		   };
+	if (opt != 'm' && conf[1]) {
+		expand_list(gActionList, special, specialNum, specialSize);
+		gActionList.special[gActionList.specialNum] = a;
+		gActionList.specialNum++;
+	} else {
+		expand_list(gActionList, other, otherNum, otherSize);
+		gActionList.other[gActionList.otherNum] = a;
+		gActionList.otherNum++;
+	}
+	return;
+}
+
+void
 parse_sysuser_line(const char *line)
 {
 	line = skip_space(line);
@@ -195,6 +273,8 @@ parse_sysuser_line(const char *line)
 
 	printf("%c: %s | %s | %s | %s | %s\n", opt, conf[0], conf[1], conf[2],
 					       conf[3], conf[4]);
+
+	add_action(opt, conf);
 
 out:
 	for (int i = 0; i < 5; i++)
@@ -336,6 +416,15 @@ add_group(Group_Entry *group)
 	return;
 }
 
+int
+is_in_group(const Group_Entry *group, const User_Entry *user)
+{
+	char *p = strstr(group->members, user->name);
+	return p					&&
+	       (p == group->members || p[-1] == ',')	&&
+	       (p[strlen(user->name)] == '\0' || p[strlen(user->name)] == ',');
+}
+
 void
 load_group(void)
 {
@@ -473,6 +562,36 @@ idpool_destroy(void)
 	return;
 }
 
+void
+do_action(Action *a)
+{
+	printf("%c: %s | %s | %s | %s | %s\n", a->type,
+	       a->name, a->id, a->gecos, a->home, a->shell);
+
+	return;
+}
+
+void
+do_actions(void)
+{
+	puts("Special actions");
+	for (size_t i = 0; i < gActionList.specialNum; i++) {
+		Action *a = gActionList.special + i;
+		do_action(a);
+		frees(a->name, a->id, a->gecos, a->home, a->shell);
+	}
+
+	puts("Other actions");
+	for (size_t i = 0; i < gActionList.otherNum; i++) {
+		Action *a = gActionList.other + i;
+		do_action(a);
+		frees(a->name, a->id, a->gecos, a->home, a->shell);
+	}
+
+	frees(gActionList.special, gActionList.other);
+	return;
+}
+
 int
 main(int argc, const char *argv[])
 {
@@ -481,10 +600,13 @@ main(int argc, const char *argv[])
 	load_passwd();
 	load_group();
 
-	idpool_init(ID_RANGE_START, ID_RANGE_END);
+	idpool_init(gIDRangeStart, gIDRangeEnd);
 	idpool_destroy();
 
 	parse_sysuser_conf(argv[1]);
+
+	do_actions();
+
 	unload_group();
 	unload_passwd();
 	return 0;
