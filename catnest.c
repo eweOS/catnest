@@ -38,6 +38,16 @@
 		free(_pList[i]);					\
 } while (0)
 
+#ifdef __CATNEST_DEBUG
+
+#define debugf(...) printf(__VA_ARGS__)
+
+#else
+
+#define debugf(...)
+
+#endif
+
 #define check(cond, ...) do_if(!(cond), do_log(__VA_ARGS__); exit(-1))
 #define warn_if(cond, action, ...) do_if(cond, do_log(__VA_ARGS__); action)
 #define DO_RETURN return;
@@ -278,7 +288,7 @@ parse_sysuser_line(const char *line)
 		}
 	}
 
-	printf("%c: %s | %s | %s | %s | %s\n", opt, conf[0], conf[1], conf[2],
+	debugf("%c: %s | %s | %s | %s | %s\n", opt, conf[0], conf[1], conf[2],
 					       conf[3], conf[4]);
 
 	add_action(opt, conf);
@@ -392,7 +402,7 @@ load_passwd(void)
 
 		check(i == 7, "misformed line in passwd\n");
 
-		printf("name: %s, passwd %s, uid %lu. gid %lu, gecos %s"
+		debugf("name: %s, passwd %s, uid %lu. gid %lu, gecos %s"
 		       " home %s, shell %s\n",
 		       u.name, u.passwd, u.uid, u.gid, u.gecos, u.home, u.shell);
 		add_user(&u);
@@ -513,7 +523,7 @@ load_group(void)
 
 		add_group(&g);
 
-		printf("name %s, passwd %s, gid %lu, members %s\n",
+		debugf("name %s, passwd %s, gid %lu, members %s\n",
 		       g.name, g.passwd, g.gid, g.members);
 
 		free(line);
@@ -768,7 +778,7 @@ do_action_add_group(Action *a)
 void
 do_action(Action *a)
 {
-	printf("%c: %s | %s | %s | %s | %s\n", a->type,
+	debugf("%c: %s | %s | %s | %s | %s\n", a->type,
 	       a->name, a->id, a->gecos, a->home, a->shell);
 
 	switch (a->type) {
@@ -789,14 +799,14 @@ do_action(Action *a)
 void
 do_actions(void)
 {
-	puts("Special actions");
+	debugf("Special actions");
 	for (size_t i = 0; i < gActionList.specialNum; i++) {
 		Action *a = gActionList.special + i;
 		do_action(a);
 		frees(a->name, a->id, a->gecos, a->home, a->shell);
 	}
 
-	puts("Other actions");
+	debugf("Other actions");
 	for (size_t i = 0; i < gActionList.otherNum; i++) {
 		Action *a = gActionList.other + i;
 		do_action(a);
@@ -863,7 +873,7 @@ main(int argc, char *argv[])
 	while ((opt = getopt(argc, argv, "hr:")) != -1) {
 		switch (opt) {
 		case 'r':
-			printf("chroot to %s\n", optarg);
+			debugf("chroot to %s\n", optarg);
 			check(!chroot(optarg),
 			      "Cannot change root directory to %s\n", optarg);
 			break;
