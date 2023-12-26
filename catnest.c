@@ -14,6 +14,9 @@
 #include<stdbool.h>
 
 #include<unistd.h>
+#include<sys/types.h>
+#include<sys/stat.h>
+#include<dirent.h>
 
 #define PATH_PASSWD 	"/etc/passwd"
 #define PATH_GROUP	"/etc/group"
@@ -813,7 +816,43 @@ print_help(void)
 	puts("\tcatnest [OPTIONS] [CONFIGURATION] [CONFIGURATION]\n");
 	puts("Options:");
 	puts("\t-h:\tPrint this help");
-	puts("\t-r DIR:\tSet root to DIR");
+	puts("\t-r DIR:\tSet root to DIR\n");
+	puts("catnest is a part of eweOS project, "
+	     "distributed under MIT License");
+	puts("See also https://os.ewe.moe for more information");
+	return;
+}
+
+int
+is_directory(const char *path)
+{
+	struct stat t;
+	check(!stat(path, &t), "Cannot get status of file %s\n", path);
+	return S_ISDIR(t.st_mode);
+}
+
+void
+iterate_directory(const char *path,
+		  void (*callback)(const char *path))
+{
+	DIR *root = opendir(path);
+	check(root, "Cannot open directory %s\n", path);
+
+	chdir(path);
+
+	for (struct dirent *dir = readdir(root); dir; dir = readdir(root)) {
+		if (dir->d_name[0] == '.')
+			continue;
+
+		if (is_directory(dir->d_name))
+			iterate_directory(dir->d_name, callback);
+		else
+			callback(dir->d_name);
+	}
+
+	closedir(root);
+	chdir("..");
+
 	return;
 }
 
@@ -843,8 +882,13 @@ main(int argc, char *argv[])
 
 	idpool_init(gIDRangeStart, gIDRangeEnd);
 
-	for (int i = optind; i < argc; i++)
-		parse_sysuser_conf(argv[i]);
+	if (optind == argc) {
+		iterate_directory("/etc/sysusers.d", parse_sysuser_conf);
+		iterate_directory("/usr/lib/sysusers.d", parse_sysuser_conf);
+	} else {
+		for (int i = optind; i < argc; i++)
+			parse_sysuser_conf(argv[i]);
+	}
 
 	do_actions();
 
