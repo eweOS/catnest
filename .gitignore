@@ -58,3 +58,4 @@ group
 passwd.old
 group.old
 shadow
+root/*

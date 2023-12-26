@@ -13,21 +13,12 @@
 #include<stdarg.h>
 #include<stdbool.h>
 
-#ifdef __CATNEST_DEBUG__
-
-#define PATH_PASSWD	"./passwd"
-#define PATH_GROUP	"./group"
-#define PATH_SHADOW	"./shadow"
-#define PATH_GSHADOW	"./gshadow"
-
-#else
+#include<unistd.h>
 
 #define PATH_PASSWD 	"/etc/passwd"
 #define PATH_GROUP	"/etc/group"
 #define PATH_SHADOW	"/etc/shadow"
 #define PATH_GSHADOW	"/etc/gshadow"
-
-#endif	// __CATNEST_DEBUG__
 
 #define ID_RANGE_START	0
 #define ID_RANGE_END	65536
@@ -813,10 +804,38 @@ do_actions(void)
 	return;
 }
 
-int
-main(int argc, const char *argv[])
+void
+print_help(void)
 {
-	do_if(argc != 2, return -1);
+	puts("catnest: a substitution of systemd-sysusers");
+	puts("Allocate system users and groups\n");
+	puts("Usage:");
+	puts("\tcatnest [OPTIONS] [CONFIGURATION] [CONFIGURATION]\n");
+	puts("Options:");
+	puts("\t-h:\tPrint this help");
+	puts("\t-r DIR:\tSet root to DIR");
+	return;
+}
+
+int
+main(int argc, char *argv[])
+{
+	int opt = 0;
+	while ((opt = getopt(argc, argv, "hr:")) != -1) {
+		switch (opt) {
+		case 'r':
+			printf("chroot to %s\n", optarg);
+			check(!chroot(optarg),
+			      "Cannot change root directory to %s\n", optarg);
+			break;
+		case 'h':
+			print_help();
+			return -1;
+		default:
+			print_help();
+			return -1;
+		}
+	}
 
 	load_passwd();
 	load_group();
@@ -824,7 +843,8 @@ main(int argc, const char *argv[])
 
 	idpool_init(gIDRangeStart, gIDRangeEnd);
 
-	parse_sysuser_conf(argv[1]);
+	for (int i = optind; i < argc; i++)
+		parse_sysuser_conf(argv[i]);
 
 	do_actions();
 
