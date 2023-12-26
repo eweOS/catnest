@@ -17,6 +17,15 @@
 
 #define PATH_PASSWD	"./passwd"
 #define PATH_GROUP	"./group"
+#define PATH_SHADOW	"./shadow"
+#define PATH_GSHADOW	"./gshadow"
+
+#else
+
+#define PATH_PASSWD 	"/etc/passwd"
+#define PATH_GROUP	"/etc/group"
+#define PATH_SHADOW	"/etc/shadow"
+#define PATH_GSHADOW	"/etc/gshadow"
 
 #endif	// __CATNEST_DEBUG__
 
@@ -103,6 +112,8 @@ struct {
 } gIDPool;
 
 unsigned long int gIDRangeStart = ID_RANGE_START, gIDRangeEnd = ID_RANGE_END;
+
+FILE *gShadow;
 
 void
 do_log(const char *fmt, ...)
@@ -619,6 +630,34 @@ idpool_destroy(void)
 }
 
 void
+shadows_init(void)
+{
+	gShadow		= fopen(PATH_SHADOW, "a");
+	check(gShadow, "Cannot open shadow file %s\n", PATH_SHADOW);
+	return;
+}
+
+void
+shadows_close(void)
+{
+	fclose(gShadow);
+	return;
+}
+
+/*
+ *	The user/group must NOT exist in shadow file yet, or there will be
+ *	duplicated entries.
+ *
+ *	TODO: remove this limitation to be more robust.
+ */
+void
+add_shadow_entry(const char *name)
+{
+	fprintf(gShadow, "%s:!::0:::::\n", name);
+	return;
+}
+
+void
 do_action_add_user(Action *a)
 {
 	/*	The user already exists		*/
@@ -702,6 +741,8 @@ do_action_add_user(Action *a)
 						  	"/usr/sbin/nologin",
 				});
 
+	add_shadow_entry(a->name);
+
 	return;
 }
 
@@ -779,6 +820,7 @@ main(int argc, const char *argv[])
 
 	load_passwd();
 	load_group();
+	shadows_init();
 
 	idpool_init(gIDRangeStart, gIDRangeEnd);
 
@@ -787,7 +829,10 @@ main(int argc, const char *argv[])
 	do_actions();
 
 	idpool_destroy();
+
+	shadows_close();
 	unload_group();
 	unload_passwd();
+
 	return 0;
 }
