@@ -13,6 +13,7 @@
 #include<stdarg.h>
 #include<stdbool.h>
 
+#include<errno.h>
 #include<unistd.h>
 #include<sys/types.h>
 #include<sys/stat.h>
@@ -841,6 +842,17 @@ is_directory(const char *path)
 	return S_ISDIR(t.st_mode);
 }
 
+int
+is_existed(const char *path)
+{
+	struct stat t;
+	if (stat(path, &t)) {
+		check(errno == ENOENT, "Cannot get status of file %s\n", path);
+		return 0;
+	}
+	return 1;
+}
+
 void
 iterate_directory(const char *path,
 		  void (*callback)(const char *path))
@@ -893,7 +905,8 @@ main(int argc, char *argv[])
 	idpool_init(gIDRangeStart, gIDRangeEnd);
 
 	if (optind == argc) {
-		iterate_directory("/etc/sysusers.d", parse_sysuser_conf);
+		if (is_existed("/etc/sysusers.d"))
+			iterate_directory("/etc/sysusers.d", parse_sysuser_conf);
 		iterate_directory("/usr/lib/sysusers.d", parse_sysuser_conf);
 	} else {
 		for (int i = optind; i < argc; i++)
