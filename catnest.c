@@ -744,14 +744,14 @@ do_action_add_user(Action *a)
 			} else {
 				gid = idpool_get();
 				idpool_use(gid);
-				add_group(&(Group_Entry)
-					{
-						.name		= a->name,
-						.gid		= gid,
-						.passwd		= "!",
-						.members	= "",
-					});
 			}
+			add_group(&(Group_Entry)
+				{
+					.name		= a->name,
+					.gid		= gid,
+					.passwd		= "!",
+					.members	= "",
+				});
 		}
 	}
 
