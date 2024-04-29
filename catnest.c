@@ -2,7 +2,7 @@
  *	catnest
  *	A substitution of systemd-sysusers
  *	This file is distributed under MIT License.
- *	Copyright (c) 2023 Yao Zi. All rights reserved.
+ *	Copyright (c) 2023-2024 Yao Zi. All rights reserved.
  */
 
 #include<assert.h>
@@ -565,6 +565,21 @@ idpool_new_range(unsigned long int start,
 	return range;
 }
 
+int
+idpool_is_free(unsigned long int id)
+{
+	check(id >= gIDPool.start && id <= gIDPool.end,
+	      "required id out of valid range\n");
+	check(gIDPool.ranges, "no ID available");
+
+	ID_Range *r = gIDPool.ranges;
+	while (r && !(id >= r->start && id <= r->end)) {
+		r = r->next;
+	}
+
+	return r && id >= r->start && id <= r->end;
+}
+
 void
 idpool_use(unsigned long int id)
 {
@@ -615,7 +630,13 @@ idpool_init(unsigned long int start, unsigned long int end)
 
 	for (size_t i = 0; i < gUserList.userNum; i++) {
 		unsigned long int id = gUserList.users[i].uid;
-		if (id >= start || id <= end)
+		if (id >= start && id <= end)
+			idpool_use(id);
+	}
+
+	for (size_t i = 0; i < gGroupList.groupNum; i++) {
+		unsigned long int id = gGroupList.groups[i].gid;
+		if (id >= start && id <= end && idpool_is_free(id))
 			idpool_use(id);
 	}
 
