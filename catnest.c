@@ -612,12 +612,11 @@ idpool_is_free(unsigned long int id)
 	return r && id >= r->start && id <= r->end;
 }
 
-void
-idpool_use(unsigned long int id)
+int
+idpool_tryuse(unsigned long int id)
 {
 	check(id >= gIDPool.start && id <= gIDPool.end,
 	      "required id out of valid range\n");
-	check(gIDPool.ranges, "no ID available");
 
 	ID_Range *r = gIDPool.ranges, **lastNext = &gIDPool.ranges;
 	while (r && !(id >= r->start && id <= r->end)) {
@@ -625,8 +624,8 @@ idpool_use(unsigned long int id)
 		r = r->next;
 	}
 
-	check(r && id >= r->start && id <= r->end,
-	      "id %lu is not available\n", id);
+	if (!r || id < r->start || id > r->end)
+		return -1;
 
 	if (id == r->start || id == r->end) {
 		r->start++;
@@ -642,6 +641,17 @@ idpool_use(unsigned long int id)
 		*lastNext = r->next;
 		free(r);
 	}
+
+	return 0;
+}
+
+void
+idpool_use(unsigned long int id)
+{
+	check(gIDPool.ranges, "no ID available");
+
+	check(!idpool_tryuse(id),
+	      "id %lu is not available\n", id);
 
 	return;
 }
@@ -801,6 +811,9 @@ do_action_add_user(Action *a)
 
 	add_shadow_entry(a->name);
 
+	idpool_tryuse(uid);
+	idpool_tryuse(gid);
+
 	return;
 }
 
@@ -817,7 +830,6 @@ do_action_add_group(Action *a)
 		warn_if(*end, DO_RETURN, "Invalid GID %s\n", a->id);
 	} else {
 		gid = idpool_get();
-		idpool_use(gid);
 	}
 
 	add_group(&(Group_Entry) {
@@ -826,7 +838,8 @@ do_action_add_group(Action *a)
 					.gid		= gid,
 					.members	= "",
 				 });
-	return;
+
+	idpool_tryuse(gid);
 }
 
 void
