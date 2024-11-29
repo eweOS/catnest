@@ -100,10 +100,8 @@ typedef struct {
 } Action;
 
 struct {
-	Action *special;	// Entries with id speicifed
-	Action *other;
-	size_t specialSize, specialNum;
-	size_t otherSize, otherNum;
+	Action *entries;
+	size_t entrySize, entryNum;
 } gActionList;
 
 typedef struct ID_Range {
@@ -227,16 +225,10 @@ add_action(char opt, char *conf[5])
 			.home	= strdup_f(conf[3]),
 			.shell	= strdup_f(conf[4]),
 		   };
-	if (opt != 'm' && conf[1]) {
-		expand_list(gActionList, special, specialNum, specialSize);
-		gActionList.special[gActionList.specialNum] = a;
-		gActionList.specialNum++;
-	} else {
-		expand_list(gActionList, other, otherNum, otherSize);
-		gActionList.other[gActionList.otherNum] = a;
-		gActionList.otherNum++;
-	}
-	return;
+
+	expand_list(gActionList, entries, entryNum, entrySize);
+	gActionList.entries[gActionList.entryNum] = a;
+	gActionList.entryNum++;
 }
 
 void
@@ -878,35 +870,39 @@ do_action(Action *a)
 void
 do_actions(void)
 {
-	debugf("Special actions");
-	for (size_t i = 0; i < gActionList.specialNum; i++) {
-		Action *a = gActionList.special + i;
-		do_action(a);
-		frees(a->name, a->id, a->gecos, a->home, a->shell);
-	}
-
-	debugf("Other actions");
-	for (size_t i = 0; i < gActionList.otherNum; i++) {
-		Action *a = gActionList.other + i;
-		if (a->type == 'm')
+	debugf("Actions with ID specified\n");
+	for (size_t i = 0; i < gActionList.entryNum; i++) {
+		Action *a = gActionList.entries + i;
+		if (a->type == 'm' || !a->id)
 			continue;
 
 		do_action(a);
-		frees(a->name, a->id, a->gecos, a->home, a->shell);
 	}
 
-	debugf("Membership changes");
-	for (size_t i = 0; i < gActionList.otherNum; i++) {
-		Action *a = gActionList.other + i;
+	debugf("Normal actions\n");
+	for (size_t i = 0; i < gActionList.entryNum; i++) {
+		Action *a = gActionList.entries + i;
+		if (a->type == 'm' || a->id)
+			continue;
+
+		do_action(a);
+	}
+
+	debugf("Membership actions\n");
+	for (size_t i = 0; i < gActionList.entryNum; i++) {
+		Action *a = gActionList.entries + i;
 		if (a->type != 'm')
 			continue;
 
 		do_action(a);
+	}
+
+	for (size_t i = 0; i < gActionList.entryNum; i++) {
+		Action *a = gActionList.entries + i;
 		frees(a->name, a->id, a->gecos, a->home, a->shell);
 	}
 
-	frees(gActionList.special, gActionList.other);
-	return;
+	frees(gActionList.entries);
 }
 
 void

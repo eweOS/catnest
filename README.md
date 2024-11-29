@@ -24,7 +24,6 @@ cc catnest.c -o catnest
 
 ## Differences from systemd-sysusers
 
-- Support option 'u', 'g' and 'm' only, 'r' is ignored
 - Users and groups specified in 'm' entries won't be implicitly created if they
   don't exist.
 - File path in ID field is not supported
