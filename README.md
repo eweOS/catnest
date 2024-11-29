@@ -6,7 +6,7 @@ A substitution for ``systemd-sysusers``
 
 - Small size (less than 500 cloc), single file
 - systemd-free
-- POSIX compatible
+- Mostly POSIX compatible
 
 ## Installation
 
@@ -24,16 +24,17 @@ cc catnest.c -o catnest
 
 ## Differences from systemd-sysusers
 
-- Users and groups specified in 'm' entries won't be implicitly created if they
-  don't exist.
-- File path in ID field is not supported
-- All GECOS need to be quoted (even it does ***NOT*** content a blank character)
-- gshadow files are not completely supported, but ``catnest`` will append to it
-when needed. All existed group passwords will be ***ERASED***.
+- catnest doesn't create users or groups mentioned in 'm' entires implicitly.
+- File paths in ID field are not supported
+- All GECOS strings need quotation, even if they do ***NOT*** contain a blank
+  character)
+- gshadow files are not completely supported, but `catnest` will append to it
+  if necessary. All existed group passwords will be ***ERASED***.
 
 ## About
 
-``catnest`` is a part of eweOS project, mainly developed by Ziyao.
+`catnest` is a part of eweOS project, mainly developed by
+`Yao Zi <ziyao@disroot.org>`.
 
 The source is distributed under MIT License.
 

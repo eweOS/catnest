@@ -11,17 +11,31 @@ catnest \- A substitution for systemd-sysusers
 
 .TP
 .B
---help
+-h
 .RS
-show the help
+show help text
+.RE
+.TP
+.B
+-r DIR
+.RS
+Set root to
+.B DIR
 .RE
 
 .SH Difference from systemd-sysusers
-catnest supports option 'u' and 'g' only, 'r' is ignored now. File paths
-in ID field are not supported. All GECOS need to be quoted, even it does NOT
-content a blank character. gshadow files are not completely supported, but
-catnest will append to it when needed. All existed group passwords will be
-ERASED.
+.P
+catnest doesn't create users or groups mentioned in 'm' entries implicitly.
+.P
+File paths in ID field are not supported.
+.P
+All GECOS strings need quotation, even if they don't
+.B NOT
+contain a blank character.
+.P
+gshadow files are not completely supported, but catnest will append to it
+when needed. All existed group passwords will be
+.B ERASED.
 
 .SH SEE ALSO
 .TP
