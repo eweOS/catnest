@@ -24,7 +24,9 @@ cc catnest.c -o catnest
 
 ## Differences from systemd-sysusers
 
-- Support option 'u' and 'g' only, 'r' is ignored
+- Support option 'u', 'g' and 'm' only, 'r' is ignored
+- Users and groups specified in 'm' entries won't be implicitly created if they
+  don't exist.
 - File path in ID field is not supported
 - All GECOS need to be quoted (even it does ***NOT*** content a blank character)
 - gshadow files are not completely supported, but ``catnest`` will append to it

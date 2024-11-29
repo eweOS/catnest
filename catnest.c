@@ -483,12 +483,52 @@ get_group_by_id(unsigned long int gid)
 }
 
 int
-is_in_group(const Group_Entry *group, const User_Entry *user)
+is_member_of(const Group_Entry *group, const User_Entry *user)
 {
-	char *p = strstr(group->members, user->name);
-	return p					&&
-	       (p == group->members || p[-1] == ',')	&&
-	       (p[strlen(user->name)] == '\0' || p[strlen(user->name)] == ',');
+	/*
+	 * User u is a member of group g, means one of
+	 *  - The members filed of g contains u
+	 *  - The primary group of u is g
+	 */
+	if (user->gid == group->gid)
+		return 1;
+
+	char *name = user->name;
+	for (const char *p = group->members; *p; p++) {
+		if (*p != *name) {
+			name = user->name;
+			while (*p != ',' && *p)
+				p++;
+			continue;
+		} else {
+			name++;
+			if (!*name)
+				return 1;
+		}
+	}
+
+	return 0;
+}
+
+void
+add_to_group(Group_Entry *group, const User_Entry *user)
+{
+	char *name = user->name;
+	char *oldMembers = group->members;
+
+	if (!*group->members) {
+		/* no secondary members yet */
+		group->members = strdup_f(name);
+	} else {
+		// account for the extra comma
+		group->members = malloc(strlen(oldMembers) + strlen(name) + 2);
+		check(group->members,
+		      "failed to allocate memory for new members\n");
+
+		sprintf(group->members, "%s,%s", oldMembers, name);
+	}
+
+	free(oldMembers);
 }
 
 void
@@ -798,6 +838,23 @@ do_action_add_group(Action *a)
 }
 
 void
+do_action_add_to_group(Action *a)
+{
+	User_Entry *user = get_user_by_name(a->name);
+	warn_if(!user, DO_RETURN, "User %s doesn't exist\n", a->name);
+	Group_Entry *group = get_group_by_name(a->id);
+	warn_if(!group, DO_RETURN, "Group %s doesn't exist\n", a->id);
+
+	if (is_member_of(group, user)) {
+		debugf("not add %s to %s: already a member\n",
+		       a->name, a->id);
+		return;
+	}
+
+	add_to_group(group, user);
+}
+
+void
 do_action(Action *a)
 {
 	debugf("%c: %s | %s | %s | %s | %s\n", a->type,
@@ -811,7 +868,7 @@ do_action(Action *a)
 		do_action_add_group(a);
 		break;
 	case 'm':
-		do_log("Type m is not supported\n");
+		do_action_add_to_group(a);
 		break;
 	}
 
@@ -831,6 +888,19 @@ do_actions(void)
 	debugf("Other actions");
 	for (size_t i = 0; i < gActionList.otherNum; i++) {
 		Action *a = gActionList.other + i;
+		if (a->type == 'm')
+			continue;
+
+		do_action(a);
+		frees(a->name, a->id, a->gecos, a->home, a->shell);
+	}
+
+	debugf("Membership changes");
+	for (size_t i = 0; i < gActionList.otherNum; i++) {
+		Action *a = gActionList.other + i;
+		if (a->type != 'm')
+			continue;
+
 		do_action(a);
 		frees(a->name, a->id, a->gecos, a->home, a->shell);
 	}
