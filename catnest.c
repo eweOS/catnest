@@ -1,8 +1,8 @@
+// SPDX-License-Identifier: MIT
 /*
- *	catnest
- *	A substitution of systemd-sysusers
- *	This file is distributed under MIT License.
- *	Copyright (c) 2023-2024 Yao Zi. All rights reserved.
+ * catnest
+ * A substitution of systemd-sysusers
+ * Copyright (c) 2023-2025 eweOS developers. All rights reserved.
  */
 
 #include<assert.h>
